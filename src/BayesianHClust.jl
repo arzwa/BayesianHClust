@@ -46,59 +46,70 @@ Base.show(io::IO, n::ClusterNode) =
 # initial nodes
 ClusterNode(d, ℓ, x) = ClusterNode(1, d, ℓ, 0., x)  
 
-function initialize(X::AbstractMatrix, model)
-    @unpack α, logdensity = model
-    return [Node(i, ClusterNode(log(α), logdensity(X[i,:]), X[i,:])) for i=1:size(X,1)]
-end
-
-function initialize(X::AbstractVector, model)
-    @unpack α, logdensity = model
-    return [Node(i, ClusterNode(log(α), logdensity(X[i]), X[i])) for i=1:size(X,1)]
-end
-
-"""
-    bhclust(X, model::BHClust)
-
-Grow the Bayesian hierarchical clustering tree for data set X.
-"""
-function bhclust(X, model)
-    nodes = initialize(X, model)
-    k = length(nodes) + 1
-    while length(nodes) > 1
-        nodes = merge(nodes, model, k)
+function bhclust(X, model::BHClust)
+    tojoin, P, M = initialize(X, model)
+    k = length(tojoin) + 1
+    while length(tojoin) > 1
+        i, j = Tuple(argmax(P))
+        newnode = join!(tojoin, P, M, i, j, k)
+        update_matrices!(k, P, M, tojoin, model)
         k += 1
     end
-    return nodes[1]
+    return tojoin[k-1]
 end
 
-function merge(nodes, model, k) 
-    N = length(nodes)
-    best = (-Inf, nothing, 0, 0)
-    for i=2:N, j=1:i-1
-        p, n = compute_merge(nodes[i].data, nodes[j].data, model)  
-        # returns a clusternode, memoized
-        best = p > best[1] ? (p, n, i, j) : best
-    end
-    # join best
-    newnode = Node(k, best[2])
-    push!(newnode, nodes[best[3]])
-    push!(newnode, nodes[best[4]])
-    # update nodes to join -- this is ugly
-    newnodes = similar(nodes, N-1)
-    newnodes[1] = newnode
-    z = 2
-    for (i,n) in enumerate(nodes)
-        (i == best[3] || i == best[4]) && continue
-        newnodes[z] = n
-        z += 1
-    end
-    return newnodes
+function initnodes(X::AbstractMatrix, model)
+    @unpack α, logdensity = model
+    return [ClusterNode(log(α), logdensity(X[i,:]), X[i,:]) for i=1:size(X,1)]
 end
 
-# this is for the Dirichlet-multinomial model
-# I'm a bit lazy and use Memoization instead of more carefully storing
-# computations that have already been done...
-@memoize function compute_merge(n1, n2, model)
+function initnodes(X::AbstractVector, model)
+    @unpack α, logdensity = model
+    return [ClusterNode(log(α), logdensity(X[i]), X[i]) for i=1:size(X,1)]
+end
+
+function initialize(X, model)
+    nodes = initnodes(X, model)
+    n = length(nodes)
+    tojoin = Dict(i=>Node(i, nodes[i]) for i=1:n)
+    nmatrix = similar(nodes, 2n - 1, 2n -1)
+    pmatrix = fill(-Inf, 2n - 1, 2n - 1)
+    Threads.@threads for i=1:n
+        for j=1:i-1
+            p, node = compute_merge(nodes[i], nodes[j], model)
+            pmatrix[i, j] = p
+            nmatrix[i, j] = node
+        end
+    end
+    tojoin, pmatrix, nmatrix
+end
+
+function join!(tojoin, P, M, i, j, k)
+    P[i,:] .= -Inf
+    P[:,i] .= -Inf
+    P[j,:] .= -Inf
+    P[:,j] .= -Inf
+    newnode = Node(k, M[i,j])
+    push!(newnode, tojoin[i])
+    push!(newnode, tojoin[j])
+    delete!(tojoin, i)
+    delete!(tojoin, j)
+    tojoin[k] = newnode
+end
+
+function update_matrices!(k, P, M, tojoin, model)
+    nk = tojoin[k]
+    idx = collect(eachindex(tojoin))
+    Threads.@threads for j=1:length(idx)
+        i = idx[j]
+        i == k && continue
+        p, node = compute_merge(tojoin[i].data, nk.data, model)
+        P[i,k] = p
+        M[i,k] = node
+    end
+end
+
+function compute_merge(n1, n2, model)
     @unpack mergedata, logdensity, α = model
     # log(d) and log(π)
     nk = n1.n + n2.n
