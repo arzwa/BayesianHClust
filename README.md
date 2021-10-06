@@ -10,6 +10,9 @@ Bayesian hierarchical clustering.
 In Proceedings of the 22nd international conference on Machine learning (pp. 297-304).
 ```
 
+Note this is software written for my own research purposes, it is
+**still experimental and needs more tests!**.
+
 ## Example
 
 ```julia
