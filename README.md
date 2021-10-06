@@ -11,7 +11,7 @@ In Proceedings of the 22nd international conference on Machine learning (pp. 297
 ```
 
 Note this is software written for my own research purposes, it is
-**still experimental and needs more tests!**.
+**still experimental and needs more tests!**
 
 ## Example
 
