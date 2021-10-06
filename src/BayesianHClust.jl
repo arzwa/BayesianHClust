@@ -1,9 +1,10 @@
+# Arthur Zwaenepoel 2021
 module BayesianHClust
 
 using Distributions, Parameters, SpecialFunctions, StatsFuns, StatsBase
 using Memoize, NewickTree, RecipesBase
 
-export BHClust, bhclust, dirichlet_cat_logpdf, cuttree
+export BHClust, bhclust, dirichlet_cat_logpdf, dirichlet_mult_logpdf, cuttree
 
 """
     BHClust
@@ -85,7 +86,7 @@ function initialize(X, model)
 end
 
 function join!(tojoin, P, M, i, j, k)
-    P[i,:] .= -Inf
+    P[i,:] .= -Inf   # nodes i and j should no longer be considered
     P[:,i] .= -Inf
     P[j,:] .= -Inf
     P[:,j] .= -Inf
@@ -129,16 +130,16 @@ function compute_merge(n1, n2, model)
     return rk, ClusterNode(nk, dk, ℓk, rk, x)
 end
 
-#function dirichlet_mult_logpdf(xs, α::Real) 
-#    n = sum(xs)
-#    K = length(xs) 
-#    Σ = K * α
-#    l = loggamma(n + 1) + loggamma(Σ) - loggamma(n + Σ) - K*loggamma(α)
-#    for x in xs
-#        l += loggamma(x + α) - loggamma(x + 1.)
-#    end
-#    return l
-#end
+function dirichlet_mult_logpdf(xs, α::Real) 
+    n = sum(xs)
+    K = length(xs) 
+    Σ = K * α
+    l = loggamma(n + 1) + loggamma(Σ) - loggamma(n + Σ) - K*loggamma(α)
+    for x in xs
+        l += loggamma(x + α) - loggamma(x + 1.)
+    end
+    return l
+end
 
 function dirichlet_cat_logpdf(xs, α::Real)
     n = sum(xs)
@@ -150,6 +151,20 @@ function dirichlet_cat_logpdf(xs, α::Real)
     end
     return l
 end
+
+function dirichlet_cat_logpdf(xs, α::AbstractVector{T}) where T
+    n = sum(xs)
+    K = length(xs)
+    Σ = sum(α)
+    l = loggamma(Σ) - sum(loggamma.(α))
+    Z = zero(T)
+    for i in eachindex(xs)
+        l += loggamma(xs[i] + α[i])
+        Z += xs[i] + α[i]
+    end
+    return l - loggamma(Z)
+end 
+
 
 """
     cuttree(node, thresh=0.5)
@@ -181,6 +196,7 @@ end
 
 function clusterlabels(cuts)
     clusters = map(getleaves, cuts)
+    sort!(clusters, by=length, rev=true)
     labels = zeros(Int, length(vcat(clusters...)))
     for (k, cluster) in enumerate(clusters)
         ids = id.(cluster)
@@ -196,6 +212,7 @@ end
     nmap = indexmap(id.(postwalk(tree))) 
     x, y = NewickTree.treepositions(tree, false)
     colors = zeros(Int, 1, size(x,2))
+    layout --> (1,2)
     for (i,cluster) in enumerate(cuts)  
         for n in prewalk(cluster)           
             colors[1,nmap[id(n)]] = i       
@@ -203,14 +220,32 @@ end
             # (also by enumeration of cuts) 
         end
     end
-    seriescolor --> colors
-    linewidth --> 1
-    legend --> false
-    yticks --> false
-    xticks --> false
-    grid --> false
-    framestyle --> :none
-    x, y
+    @series begin
+        seriescolor --> colors
+        linewidth --> 2
+        legend --> false
+        yticks --> false
+        xticks --> false
+        grid --> false
+        subplot := 2
+        framestyle --> :none
+        x, y
+    end
+    @series begin
+        subplot := 1
+        legend --> false
+        seriescolor --> :black
+        framestyle --> :box
+        linewidth --> 1
+        xguide --> "\$r\$"
+        yguide --> "# clusters"
+        xs = 0.0:0.001:1.
+        ys = map(xs) do thresh
+            cuts, labels = cuttree(tree, thresh)
+            length(cuts)
+        end
+        xs, ys
+    end
 end
 
 
